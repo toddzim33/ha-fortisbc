@@ -5,7 +5,7 @@ import logging
 from datetime import timedelta
 
 from fortisbc import FortisbcClient
-from fortisbc.exceptions import FortisbcAuthError, FortisbcError
+from fortisbc import FortisbcAuthError, FortisbcError
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant

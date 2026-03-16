@@ -4,7 +4,7 @@ from __future__ import annotations
 import voluptuous as vol
 
 from fortisbc import FortisbcClient
-from fortisbc.exceptions import FortisbcAuthError
+from fortisbc import FortisbcAuthError
 
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant

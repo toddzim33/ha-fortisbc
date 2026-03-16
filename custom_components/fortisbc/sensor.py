@@ -30,13 +30,11 @@ async def async_setup_entry(
     # Gas sensor
     if data.get("gas"):
         entities.append(FortisbcGasUsageSensor(coordinator))
-        entities.append(FortisbcGasCostSensor(coordinator))
 
-    # Electric sensors — one set per account
+    # Electric sensors — one per account
     for i, acct in enumerate(data.get("electric", [])):
         label = acct.premise_address or f"Electric {i + 1}"
         entities.append(FortisbcElectricUsageSensor(coordinator, i, label))
-        entities.append(FortisbcElectricCostSensor(coordinator, i, label))
 
     async_add_entities(entities)
 
@@ -96,27 +94,6 @@ class FortisbcElectricUsageSensor(_FortisbcBase, SensorEntity):
         }
 
 
-class FortisbcElectricCostSensor(_FortisbcBase, SensorEntity):
-    """Current billing period electricity cost in CAD."""
-
-    _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.TOTAL
-    _attr_native_unit_of_measurement = "CAD"
-
-    def __init__(self, coordinator: FortisbcCoordinator, index: int, label: str) -> None:
-        super().__init__(coordinator, f"electric_{index}_cost")
-        self._index = index
-        self._attr_name = f"FortisBC Electric Cost ({label})"
-
-    @property
-    def native_value(self):
-        accounts = (self.coordinator.data or {}).get("electric", [])
-        if self._index >= len(accounts):
-            return None
-        period = accounts[self._index].current_period
-        return period.amount_due if period else None
-
-
 class FortisbcGasUsageSensor(_FortisbcBase, SensorEntity):
     """Current billing period natural gas usage in GJ."""
 
@@ -150,24 +127,3 @@ class FortisbcGasUsageSensor(_FortisbcBase, SensorEntity):
             "days_in_period": period.days,
             "avg_temperature": period.avg_temperature,
         }
-
-
-class FortisbcGasCostSensor(_FortisbcBase, SensorEntity):
-    """Current billing period natural gas cost in CAD."""
-
-    _attr_device_class = SensorDeviceClass.MONETARY
-    _attr_state_class = SensorStateClass.TOTAL
-    _attr_native_unit_of_measurement = "CAD"
-    _attr_icon = "mdi:currency-usd"
-
-    def __init__(self, coordinator: FortisbcCoordinator) -> None:
-        super().__init__(coordinator, "gas_cost")
-        self._attr_name = "FortisBC Gas Cost"
-
-    @property
-    def native_value(self):
-        gas = (self.coordinator.data or {}).get("gas")
-        if not gas:
-            return None
-        period = gas.current_period
-        return period.amount_due if period else None
