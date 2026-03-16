@@ -9,8 +9,10 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
+from homeassistant.const import CURRENCY_DOLLAR
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+import homeassistant.util.dt as dt_util
 
 from .const import DOMAIN
 from .coordinator import FortisbcCoordinator
@@ -31,10 +33,11 @@ async def async_setup_entry(
     if data.get("gas"):
         entities.append(FortisbcGasUsageSensor(coordinator))
 
-    # Electric sensors — one per account
+    # Electric sensors — one usage + one cost per SA
     for i, acct in enumerate(data.get("electric", [])):
         label = acct.premise_address or f"Electric {i + 1}"
         entities.append(FortisbcElectricUsageSensor(coordinator, i, label))
+        entities.append(FortisbcElectricCostSensor(coordinator, i, label))
 
     async_add_entities(entities)
 
@@ -76,6 +79,16 @@ class FortisbcElectricUsageSensor(_FortisbcBase, SensorEntity):
         return period.usage if period else None
 
     @property
+    def last_reset(self):
+        accounts = (self.coordinator.data or {}).get("electric", [])
+        if self._index >= len(accounts):
+            return None
+        period = accounts[self._index].current_period
+        if not period:
+            return None
+        return dt_util.start_of_local_day(period.start_date)
+
+    @property
     def extra_state_attributes(self):
         accounts = (self.coordinator.data or {}).get("electric", [])
         if self._index >= len(accounts):
@@ -91,6 +104,52 @@ class FortisbcElectricUsageSensor(_FortisbcBase, SensorEntity):
             "premise": account.premise_address,
             "rate": account.rate_id,
             "hourly_available": account.hourly_available,
+        }
+
+
+class FortisbcElectricCostSensor(_FortisbcBase, SensorEntity):
+    """Current billing period electricity cost in CAD."""
+
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_native_unit_of_measurement = "CAD"
+    _attr_icon = "mdi:currency-usd"
+
+    def __init__(self, coordinator: FortisbcCoordinator, index: int, label: str) -> None:
+        super().__init__(coordinator, f"electric_{index}_cost")
+        self._index = index
+        self._attr_name = f"FortisBC Electric Cost ({label})"
+
+    @property
+    def native_value(self):
+        accounts = (self.coordinator.data or {}).get("electric", [])
+        if self._index >= len(accounts):
+            return None
+        period = accounts[self._index].current_period
+        return period.cost if period else None
+
+    @property
+    def last_reset(self):
+        accounts = (self.coordinator.data or {}).get("electric", [])
+        if self._index >= len(accounts):
+            return None
+        period = accounts[self._index].current_period
+        if not period:
+            return None
+        return dt_util.start_of_local_day(period.start_date)
+
+    @property
+    def extra_state_attributes(self):
+        accounts = (self.coordinator.data or {}).get("electric", [])
+        if self._index >= len(accounts):
+            return {}
+        period = accounts[self._index].current_period
+        if not period:
+            return {}
+        return {
+            "bill_start": period.start_date.isoformat(),
+            "bill_end": period.end_date.isoformat(),
+            "days_in_period": period.days,
         }
 
 
