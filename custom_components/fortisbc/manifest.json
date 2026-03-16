@@ -1,0 +1,11 @@
+{
+  "domain": "fortisbc",
+  "name": "FortisBC",
+  "version": "0.1.0",
+  "documentation": "https://github.com/toddzim33/ha-fortisbc",
+  "issue_tracker": "https://github.com/toddzim33/ha-fortisbc/issues",
+  "codeowners": ["@toddzim33"],
+  "requirements": ["fortisbc==0.1.0"],
+  "iot_class": "cloud_polling",
+  "config_flow": true
+}

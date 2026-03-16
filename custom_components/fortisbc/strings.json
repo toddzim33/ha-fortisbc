@@ -1,0 +1,21 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "FortisBC Account",
+        "description": "Enter your FortisBC MyAccount credentials.",
+        "data": {
+          "username": "Email address",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid username or password.",
+      "cannot_connect": "Unable to connect to FortisBC portal."
+    },
+    "abort": {
+      "already_configured": "This FortisBC account is already configured."
+    }
+  }
+}
