@@ -7,9 +7,8 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfEnergy
+from homeassistant.const import UnitOfEnergy, UnitOfVolume
 from homeassistant.core import HomeAssistant
-from homeassistant.const import CURRENCY_DOLLAR
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 import homeassistant.util.dt as dt_util
@@ -29,9 +28,10 @@ async def async_setup_entry(
 
     data = coordinator.data or {}
 
-    # Gas sensor
+    # Gas sensors
     if data.get("gas"):
         entities.append(FortisbcGasUsageSensor(coordinator))
+        entities.append(FortisbcGasM3Sensor(coordinator))
 
     # Electric sensors — one usage + one cost per SA
     for i, acct in enumerate(data.get("electric", [])):
@@ -154,7 +154,7 @@ class FortisbcElectricCostSensor(_FortisbcBase, SensorEntity):
 
 
 class FortisbcGasUsageSensor(_FortisbcBase, SensorEntity):
-    """Current billing period natural gas usage in GJ."""
+    """Current billing period natural gas usage in GJ (raw portal value)."""
 
     _attr_state_class = SensorStateClass.TOTAL
     _attr_native_unit_of_measurement = "GJ"
@@ -185,4 +185,59 @@ class FortisbcGasUsageSensor(_FortisbcBase, SensorEntity):
             "bill_end": period.end_date.isoformat(),
             "days_in_period": period.days,
             "avg_temperature": period.avg_temperature,
+        }
+
+
+# FortisBC bills gas in GJ; the Energy dashboard requires m³.
+# Conversion uses a typical BC interior calorific value of ~38.2 MJ/m³
+# (FortisBC's actual factor varies slightly by region and season).
+_GJ_TO_M3 = 1000.0 / 38.2
+
+
+class FortisbcGasM3Sensor(_FortisbcBase, SensorEntity):
+    """Current billing period gas usage in m³ — for the Energy dashboard gas section."""
+
+    _attr_device_class = SensorDeviceClass.GAS
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_native_unit_of_measurement = UnitOfVolume.CUBIC_METERS
+    _attr_icon = "mdi:fire"
+
+    def __init__(self, coordinator: FortisbcCoordinator) -> None:
+        super().__init__(coordinator, "gas_m3")
+        self._attr_name = "FortisBC Gas Usage (m³)"
+
+    @property
+    def native_value(self):
+        gas = (self.coordinator.data or {}).get("gas")
+        if not gas:
+            return None
+        period = gas.current_period
+        if not period:
+            return None
+        return round(period.usage * _GJ_TO_M3, 2)
+
+    @property
+    def last_reset(self):
+        gas = (self.coordinator.data or {}).get("gas")
+        if not gas:
+            return None
+        period = gas.current_period
+        if not period:
+            return None
+        return dt_util.start_of_local_day(period.start_date)
+
+    @property
+    def extra_state_attributes(self):
+        gas = (self.coordinator.data or {}).get("gas")
+        if not gas:
+            return {}
+        period = gas.current_period
+        if not period:
+            return {}
+        return {
+            "bill_start": period.start_date.isoformat(),
+            "bill_end": period.end_date.isoformat(),
+            "days_in_period": period.days,
+            "gj_raw": period.usage,
+            "conversion_factor": f"{_GJ_TO_M3:.4f} m³/GJ (approx. 38.2 MJ/m³)",
         }

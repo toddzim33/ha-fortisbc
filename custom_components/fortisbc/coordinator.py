@@ -27,16 +27,25 @@ class FortisbcCoordinator(DataUpdateCoordinator):
             name=DOMAIN,
             update_interval=timedelta(hours=UPDATE_INTERVAL_HOURS),
         )
-        self._client = FortisbcClient(
-            entry.data[CONF_USERNAME],
-            entry.data[CONF_PASSWORD],
-        )
+        self._username = entry.data[CONF_USERNAME]
+        self._password = entry.data[CONF_PASSWORD]
 
     async def _async_update_data(self) -> dict:
-        """Fetch data from FortisBC portal."""
+        """Fetch data from FortisBC portal.
+
+        A fresh client is created per fetch so the TLS session is always
+        properly closed, regardless of success or failure.
+        """
+        def _fetch() -> dict:
+            client = FortisbcClient(self._username, self._password)
+            try:
+                client.login()
+                return client.fetch_all()
+            finally:
+                client.close()
+
         try:
-            await self.hass.async_add_executor_job(self._client.login)
-            return await self.hass.async_add_executor_job(self._client.fetch_all)
+            return await self.hass.async_add_executor_job(_fetch)
         except FortisbcAuthError as err:
             raise ConfigEntryAuthFailed(err) from err
         except FortisbcError as err:
