@@ -154,9 +154,14 @@ class FortisbcElectricCostSensor(_FortisbcBase, SensorEntity):
 
 
 class FortisbcGasUsageSensor(_FortisbcBase, SensorEntity):
-    """Current billing period natural gas usage in GJ (raw portal value)."""
+    """Current billing period natural gas usage in GJ (raw portal value).
 
-    _attr_state_class = SensorStateClass.TOTAL
+    SensorStateClass.MEASUREMENT keeps this out of the Energy dashboard dropdowns —
+    it's a display-only sensor. The m³ sensor (FortisbcGasM3Sensor) is the one
+    that appears in the Energy gas section.
+    """
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "GJ"
     _attr_icon = "mdi:fire"
 
