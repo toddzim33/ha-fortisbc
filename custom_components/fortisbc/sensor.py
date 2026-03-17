@@ -32,6 +32,7 @@ async def async_setup_entry(
     if data.get("gas"):
         entities.append(FortisbcGasUsageSensor(coordinator))
         entities.append(FortisbcGasM3Sensor(coordinator))
+        entities.append(FortisbcGasCostSensor(coordinator))
 
     # Electric sensors — one usage + one cost per SA
     for i, acct in enumerate(data.get("electric", [])):
@@ -245,4 +246,49 @@ class FortisbcGasM3Sensor(_FortisbcBase, SensorEntity):
             "days_in_period": period.days,
             "gj_raw": period.usage,
             "conversion_factor": f"{_GJ_TO_M3:.4f} m³/GJ (approx. 38.2 MJ/m³)",
+        }
+
+
+class FortisbcGasCostSensor(_FortisbcBase, SensorEntity):
+    """Most recent gas bill amount in CAD."""
+
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_native_unit_of_measurement = "CAD"
+    _attr_icon = "mdi:currency-usd"
+
+    def __init__(self, coordinator: FortisbcCoordinator) -> None:
+        super().__init__(coordinator, "gas_cost")
+        self._attr_name = "FortisBC Gas Cost"
+
+    @property
+    def native_value(self):
+        gas = (self.coordinator.data or {}).get("gas")
+        if not gas:
+            return None
+        period = gas.current_period
+        return period.cost if period else None
+
+    @property
+    def last_reset(self):
+        gas = (self.coordinator.data or {}).get("gas")
+        if not gas:
+            return None
+        period = gas.current_period
+        if not period:
+            return None
+        return dt_util.start_of_local_day(period.start_date)
+
+    @property
+    def extra_state_attributes(self):
+        gas = (self.coordinator.data or {}).get("gas")
+        if not gas:
+            return {}
+        period = gas.current_period
+        if not period:
+            return {}
+        return {
+            "bill_start": period.start_date.isoformat(),
+            "bill_end": period.end_date.isoformat(),
+            "days_in_period": period.days,
         }
