@@ -33,12 +33,14 @@ async def async_setup_entry(
         entities.append(FortisbcGasUsageSensor(coordinator))
         entities.append(FortisbcGasM3Sensor(coordinator))
         entities.append(FortisbcGasCostSensor(coordinator))
+        entities.append(FortisbcGasRateSensor(coordinator))
 
-    # Electric sensors — one usage + one cost per SA
+    # Electric sensors — one usage + one cost + one rate per SA
     for i, acct in enumerate(data.get("electric", [])):
         label = acct.premise_address or f"Electric {i + 1}"
         entities.append(FortisbcElectricUsageSensor(coordinator, i, label))
         entities.append(FortisbcElectricCostSensor(coordinator, i, label))
+        entities.append(FortisbcElectricRateSensor(coordinator, i, label))
 
     async_add_entities(entities)
 
@@ -250,7 +252,16 @@ class FortisbcGasM3Sensor(_FortisbcBase, SensorEntity):
 
 
 class FortisbcGasCostSensor(_FortisbcBase, SensorEntity):
-    """Most recent gas bill amount in CAD."""
+    """Current billing period gas cost in CAD.
+
+    FortisBC only finalises the cost when the bill is issued (end of period).
+    While the period is in progress, cost is derived from current usage × the
+    effective rate from the most recently completed bill.  This keeps the HA
+    statistics sum non-zero and growing so the Energy dashboard can track costs.
+
+    last_reset is always the start of the *current* billing period so it aligns
+    with the gas m³ sensor and HA correctly bins both sensors together.
+    """
 
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_state_class = SensorStateClass.TOTAL
@@ -261,34 +272,147 @@ class FortisbcGasCostSensor(_FortisbcBase, SensorEntity):
         super().__init__(coordinator, "gas_cost")
         self._attr_name = "FortisBC Gas Cost"
 
+    def _gas(self):
+        return (self.coordinator.data or {}).get("gas")
+
+    def _last_billed_rate_per_m3(self, gas) -> float | None:
+        """Return CAD/m³ from the most recent completed bill."""
+        for period in gas.billing_periods:
+            if period.cost is not None and period.usage:
+                usage_m3 = period.usage * _GJ_TO_M3
+                if usage_m3:
+                    return period.cost / usage_m3
+        return None
+
     @property
     def native_value(self):
-        gas = (self.coordinator.data or {}).get("gas")
+        gas = self._gas()
         if not gas:
             return None
         period = gas.current_period
-        return period.cost if period else None
+        if not period:
+            return None
+        # Use finalized cost when available; otherwise estimate from usage × rate.
+        if period.cost is not None:
+            return period.cost
+        rate = self._last_billed_rate_per_m3(gas)
+        if rate is None:
+            return None
+        return round(period.usage * _GJ_TO_M3 * rate, 2)
 
     @property
     def last_reset(self):
-        gas = (self.coordinator.data or {}).get("gas")
-        if not gas:
+        gas = self._gas()
+        if not gas or not gas.current_period:
             return None
-        period = gas.current_period
-        if not period:
-            return None
-        return dt_util.start_of_local_day(period.start_date)
+        return dt_util.start_of_local_day(gas.current_period.start_date)
 
     @property
     def extra_state_attributes(self):
-        gas = (self.coordinator.data or {}).get("gas")
+        gas = self._gas()
         if not gas:
             return {}
         period = gas.current_period
         if not period:
             return {}
+        rate = self._last_billed_rate_per_m3(gas)
         return {
             "bill_start": period.start_date.isoformat(),
             "bill_end": period.end_date.isoformat(),
             "days_in_period": period.days,
+            "cost_finalized": period.cost is not None,
+            "rate_used_cad_per_m3": round(rate, 4) if rate else None,
+        }
+
+
+class FortisbcElectricRateSensor(_FortisbcBase, SensorEntity):
+    """Effective electricity rate in CAD/kWh derived from billing period cost ÷ usage.
+
+    Use this as the 'current price' entity in the Energy dashboard so HA can
+    calculate approximate daily costs from metered usage.
+    """
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "CAD/kWh"
+    _attr_icon = "mdi:currency-usd"
+    _attr_suggested_display_precision = 4
+
+    def __init__(self, coordinator: FortisbcCoordinator, index: int, label: str) -> None:
+        super().__init__(coordinator, f"electric_{index}_rate")
+        self._index = index
+        self._attr_name = f"FortisBC Electric Rate ({label})"
+
+    @property
+    def native_value(self):
+        accounts = (self.coordinator.data or {}).get("electric", [])
+        if self._index >= len(accounts):
+            return None
+        period = accounts[self._index].current_period
+        if not period or not period.cost or not period.usage:
+            return None
+        return round(period.cost / period.usage, 4)
+
+    @property
+    def extra_state_attributes(self):
+        accounts = (self.coordinator.data or {}).get("electric", [])
+        if self._index >= len(accounts):
+            return {}
+        period = accounts[self._index].current_period
+        if not period:
+            return {}
+        return {
+            "bill_cost": period.cost,
+            "bill_usage_kwh": period.usage,
+            "bill_start": period.start_date.isoformat(),
+            "bill_end": period.end_date.isoformat(),
+        }
+
+
+class FortisbcGasRateSensor(_FortisbcBase, SensorEntity):
+    """Effective gas rate in CAD/m³ derived from billing period cost ÷ usage.
+
+    Use this as the 'current price' entity in the Energy dashboard gas section.
+    Uses the most recent billed period (same as GasCostSensor).
+    """
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "CAD/m³"
+    _attr_icon = "mdi:currency-usd"
+    _attr_suggested_display_precision = 4
+
+    def __init__(self, coordinator: FortisbcCoordinator) -> None:
+        super().__init__(coordinator, "gas_rate")
+        self._attr_name = "FortisBC Gas Rate"
+
+    @property
+    def _last_billed_period(self):
+        gas = (self.coordinator.data or {}).get("gas")
+        if not gas:
+            return None
+        for period in gas.billing_periods:
+            if period.cost is not None:
+                return period
+        return None
+
+    @property
+    def native_value(self):
+        period = self._last_billed_period
+        if not period or not period.cost or not period.usage:
+            return None
+        usage_m3 = round(period.usage * _GJ_TO_M3, 4)
+        if not usage_m3:
+            return None
+        return round(period.cost / usage_m3, 4)
+
+    @property
+    def extra_state_attributes(self):
+        period = self._last_billed_period
+        if not period:
+            return {}
+        return {
+            "bill_cost": period.cost,
+            "bill_usage_gj": period.usage,
+            "bill_usage_m3": round(period.usage * _GJ_TO_M3, 2),
+            "bill_start": period.start_date.isoformat(),
+            "bill_end": period.end_date.isoformat(),
         }
